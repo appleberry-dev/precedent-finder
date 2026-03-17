@@ -134,7 +134,7 @@ class QAEngine:
 
     def _call_openai(self, system: str, user: str) -> str:
         resp = self._openai.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.4-2026-03-05",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -144,7 +144,7 @@ class QAEngine:
 
     def _call_openai_stream(self, system: str, user: str):
         stream = self._openai.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.4-2026-03-05",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},

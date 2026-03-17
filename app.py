@@ -33,9 +33,10 @@ with st.sidebar:
     st.header("설정")
 
     llm_backend = "openai"
-    st.markdown("**LLM**: OpenAI (gpt-4o-mini)")
+    st.markdown("**LLM**: OpenAI (gpt-5.4)")
 
-    top_k = st.slider("검색 청크 수", min_value=3, max_value=15, value=5)
+    top_k = st.slider("참고 자료 수", min_value=3, max_value=15, value=5,
+                       help="질문 시 GPT에게 넘길 판례/법령 조각 수. 높을수록 답변이 정확하지만 느리고 비용이 증가합니다. 5~7 권장.")
 
     st.divider()
 
