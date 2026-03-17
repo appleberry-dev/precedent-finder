@@ -9,8 +9,17 @@ wheels/
 # Virtual environments
 .venv
 
+# Environment
+.env
+.streamlit/secrets.toml
+
 # Claude Code
 .claude/
 
 # Screenshots
 *.png
+
+# Data (large files)
+data/chroma_db/
+data/pdfs/
+data/precedent_finder.db

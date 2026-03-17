@@ -16,6 +16,12 @@ dependencies = [
     "typer>=0.12",
     "selenium>=4.41.0",
     "webdriver-manager>=4.0.2",
+    "onnxruntime>=1.19,<1.21",
+    "chromadb>=0.4,<0.6",
+    "ollama>=0.4",
+    "anthropic>=0.40",
+    "openai>=1.50",
+    "streamlit>=1.40",
 ]
 
 [project.scripts]
