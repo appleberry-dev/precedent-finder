@@ -1,7 +1,14 @@
 """판례 파인더 — Streamlit 웹 UI"""
 
+import os
 import streamlit as st
 from pathlib import Path
+
+# Streamlit Cloud 환경: secrets → 환경변수 매핑
+if hasattr(st, "secrets"):
+    for key in ("OPENAI_API_KEY", "LAW_API_OC"):
+        if key in st.secrets and key not in os.environ:
+            os.environ[key] = st.secrets[key]
 
 st.set_page_config(
     page_title="판례 파인더",

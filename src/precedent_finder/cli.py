@@ -23,7 +23,7 @@ def _get_store():
 def crawl(
     source: str = typer.Option(
         "law-site",
-        help="데이터 소스: law-site, court-viewer, statutes",
+        help="데이터 소스: law-site, law-api, court-viewer, statutes",
     ),
     keywords: str = typer.Option("학원,교습소", help="검색 키워드 (쉼표 구분)"),
     max_results: int = typer.Option(50, "--max", help="키워드당 최대 수집 건수"),
@@ -56,6 +56,40 @@ def crawl(
                 store.upsert_precedent(asdict(prec), source="law_site")
             console.print(f"\n[bold green]완료: {len(results)}건 수집 → DB 저장[/]")
 
+        elif source == "law-api":
+            from precedent_finder.crawlers.law_api import LawAPIClient
+            from dataclasses import asdict
+
+            console.print(f"[bold green]법제처 Open API 판례 수집 시작[/]")
+            console.print(f"  키워드: {keyword_list}")
+
+            with LawAPIClient() as client:
+                all_details = []
+                for kw in keyword_list:
+                    details = client.search_and_fetch(kw, max_results=max_results, delay=0.3)
+                    all_details.extend(details)
+
+                # DB 저장
+                saved = 0
+                for d in all_details:
+                    store.upsert_precedent({
+                        "prec_seq": d.serial_number,
+                        "case_name": d.case_name,
+                        "case_number": d.case_number,
+                        "judgment_date": d.judgment_date,
+                        "court_name": d.court_name,
+                        "case_type": d.case_type,
+                        "judgment_type": d.judgment_type,
+                        "issues": d.issues,
+                        "summary": d.summary,
+                        "full_text": d.full_text,
+                        "reference_articles": d.reference_articles,
+                        "reference_cases": d.reference_cases,
+                    }, source="law_api")
+                    saved += 1
+
+            console.print(f"\n[bold green]완료: {saved}건 수집 → DB 저장[/]")
+
         elif source == "court-viewer":
             from precedent_finder.crawlers.court_viewer import crawl_court_viewer
             from dataclasses import asdict
@@ -77,27 +111,31 @@ def crawl(
             console.print(f"\n[bold green]완료: {len(results)}건 수집 → DB 저장[/]")
 
         elif source == "statutes":
-            from precedent_finder.crawlers.law_scraper import crawl_statutes
+            from precedent_finder.crawlers.law_api import LawAPIClient
 
             law_list = [l.strip() for l in laws.split(",") if l.strip()]
-            console.print(f"[bold green]법령 조문 크롤링 시작[/]")
+            console.print(f"[bold green]법제처 API 법령 조문 수집 시작[/]")
+            console.print(f"  대상: {law_list}")
 
-            statutes = crawl_statutes(law_names=law_list, output_dir=output_dir)
+            with LawAPIClient() as client:
+                all_statutes = client.fetch_statutes(law_list)
 
-            for statute in statutes:
-                for art in statute.articles:
+            total = 0
+            for law_name, articles in all_statutes.items():
+                for art in articles:
                     store.upsert_statute(
-                        law_name=statute.name,
-                        article_number=art.article_number,
-                        article_title=art.article_title,
-                        content=art.content,
-                        source_url=statute.source_url,
+                        law_name=art["law_name"],
+                        article_number=art["article_number"],
+                        article_title=art["article_title"],
+                        content=art["content"],
                     )
-            console.print(f"\n[bold green]완료: {len(statutes)}개 법령 → DB 저장[/]")
+                    total += 1
+
+            console.print(f"\n[bold green]완료: {len(all_statutes)}개 법령, {total}개 조문 → DB 저장[/]")
 
         else:
             console.print(f"[red]알 수 없는 소스: {source}[/]")
-            console.print("사용 가능: law-site, court-viewer, statutes")
+            console.print("사용 가능: law-site, law-api, court-viewer, statutes")
             raise typer.Exit(1)
     finally:
         store.close()

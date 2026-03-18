@@ -1,12 +1,16 @@
-"""법제처 Open API 클라이언트 - 판례 검색 및 본문 조회"""
+"""법제처 Open API 클라이언트 - 판례 검색/본문 조회 + 법령 조문 조회"""
 
 import json
+import os
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from xml.etree import ElementTree
 
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BASE_URL = "http://www.law.go.kr/DRF"
 SEARCH_URL = f"{BASE_URL}/lawSearch.do"
@@ -46,12 +50,12 @@ class PrecedentDetail:
 class LawAPIClient:
     """법제처 Open API 클라이언트"""
 
-    def __init__(self, oc: str = "test"):
+    def __init__(self, oc: str | None = None):
         """
         Args:
-            oc: 사용자 이메일 ID (예: test@gmail.com → "test")
+            oc: OC 인증값 (미지정 시 환경변수 LAW_API_OC 사용)
         """
-        self.oc = oc
+        self.oc = oc or os.getenv("LAW_API_OC", "")
         self.client = httpx.Client(timeout=30.0)
 
     def search_precedents(
@@ -102,17 +106,30 @@ class LawAPIClient:
     def search_and_fetch(
         self,
         query: str,
-        max_results: int = 10,
-        delay: float = 0.5,
+        max_results: int = 100,
+        delay: float = 0.3,
     ) -> list[PrecedentDetail]:
-        """검색 후 각 판례 본문까지 모두 가져오기
+        """검색 후 각 판례 본문까지 모두 가져오기 (페이징 지원)
 
         Args:
             query: 검색 키워드
             max_results: 최대 결과 수
             delay: API 호출 간 대기 시간 (초)
         """
-        summaries = self.search_precedents(query, display=max_results)
+        # 페이징으로 전체 목록 수집
+        summaries = []
+        page = 1
+        per_page = min(max_results, 100)
+        while len(summaries) < max_results:
+            batch = self.search_precedents(query, display=per_page, page=page)
+            if not batch:
+                break
+            summaries.extend(batch)
+            if len(batch) < per_page:
+                break
+            page += 1
+            time.sleep(delay)
+        summaries = summaries[:max_results]
         print(f"[검색 완료] '{query}' → {len(summaries)}건 발견")
 
         details = []
@@ -129,6 +146,159 @@ class LawAPIClient:
 
         print(f"[완료] {len(details)}건 본문 수집 완료")
         return details
+
+    # ── 법령 조문 조회 ──
+
+    def search_laws(self, query: str, display: int = 10) -> list[dict]:
+        """법령 검색 → 법령일련번호 목록 반환"""
+        params = {
+            "OC": self.oc,
+            "target": "law",
+            "type": "XML",
+            "query": query,
+            "display": display,
+        }
+        resp = self.client.get(SEARCH_URL, params=params)
+        resp.raise_for_status()
+
+        root = ElementTree.fromstring(resp.text)
+        results = []
+        for item in root.findall(".//law"):
+            results.append({
+                "mst": self._text(item, "법령일련번호"),
+                "name": self._text(item, "법령명한글"),
+                "short_name": self._text(item, "법령약칭명"),
+                "law_id": self._text(item, "법령ID"),
+                "proclamation_date": self._text(item, "공포일자"),
+                "enforcement_date": self._text(item, "시행일자"),
+            })
+        return results
+
+    def get_statute_articles(self, mst: str) -> list[dict]:
+        """법령 본문 조회 → 조문 목록 반환
+
+        Args:
+            mst: 법령일련번호
+        """
+        params = {
+            "OC": self.oc,
+            "target": "law",
+            "type": "XML",
+            "MST": mst,
+        }
+        resp = self.client.get(DETAIL_URL, params=params)
+        resp.raise_for_status()
+
+        root = ElementTree.fromstring(resp.text)
+        law_name = self._text(root, ".//법령명_한글")
+
+        articles = []
+        for art in root.findall(".//조문단위"):
+            art_num = self._text(art, "조문번호")
+            art_branch = self._text(art, "조문가지번호")
+            art_title = self._text(art, "조문제목")
+            art_content = self._text(art, "조문내용")
+
+            # 항/호/목 내용 수집
+            sub_parts = []
+            for ho in art.findall(".//호"):
+                ho_content = self._text(ho, "호내용")
+                if ho_content:
+                    sub_parts.append(ho_content)
+                for mok in ho.findall("목"):
+                    mok_content = self._text(mok, "목내용")
+                    if mok_content:
+                        sub_parts.append(f"  {mok_content}")
+
+            # 조번호 구성
+            if art_branch:
+                article_number = f"제{art_num}조의{art_branch}"
+            else:
+                article_number = f"제{art_num}조"
+
+            # 전체 내용 조합
+            full_content = art_content
+            if sub_parts:
+                full_content += "\n" + "\n".join(sub_parts)
+
+            articles.append({
+                "law_name": law_name,
+                "article_number": article_number,
+                "article_title": art_title,
+                "content": full_content.strip(),
+            })
+
+        return articles
+
+    # 약칭 → 정식명칭 매핑 (검색 정확도 향상)
+    LAW_NAME_MAP = {
+        "학원법": "학원의 설립 운영 및 과외교습에 관한 법률",
+        "학원법 시행령": "학원의 설립 운영 및 과외교습에 관한 법률 시행령",
+        "아동복지법": "아동복지법",
+        "교육기본법": "교육기본법",
+        "형법": "형법",
+    }
+
+    def _find_best_match(self, query: str, results: list[dict]) -> dict | None:
+        """검색 결과에서 가장 적합한 법령 선택"""
+        if not results:
+            return None
+
+        # 1) 약칭이 정확히 일치하는 것
+        for r in results:
+            if r["short_name"] == query:
+                return r
+
+        # 2) 법령명이 정확히 일치하는 것
+        for r in results:
+            if r["name"] == query:
+                return r
+
+        # 3) 법령명에 query가 포함되고, 시행령/시행규칙이 아닌 것
+        for r in results:
+            if query in r["name"] and "시행령" not in r["name"] and "시행규칙" not in r["name"]:
+                return r
+
+        return results[0]
+
+    def fetch_statutes(
+        self,
+        law_names: list[str],
+        delay: float = 0.3,
+    ) -> dict[str, list[dict]]:
+        """법령명 목록으로 조문 일괄 수집
+
+        Args:
+            law_names: 법령명 또는 약칭 목록 (예: ["학원법", "형법"])
+            delay: API 호출 간 대기 시간
+
+        Returns:
+            {법령명: [조문 dict 목록]}
+        """
+        result = {}
+        for name in law_names:
+            # 약칭 → 정식명칭 변환
+            search_query = self.LAW_NAME_MAP.get(name, name)
+            print(f"[법령] '{name}' 검색 중... (query: '{search_query}')")
+            laws = self.search_laws(search_query, display=10)
+            if not laws:
+                print(f"  ⚠ '{name}' 검색 결과 없음")
+                continue
+
+            law = self._find_best_match(name, laws)
+            if not law:
+                print(f"  ⚠ '{name}' 매칭 실패")
+                continue
+
+            print(f"  → {law['name']} (MST: {law['mst']})")
+            time.sleep(delay)
+
+            articles = self.get_statute_articles(law["mst"])
+            print(f"  [완료] {len(articles)}개 조문 수집")
+            result[law["name"]] = articles
+            time.sleep(delay)
+
+        return result
 
     def _parse_search_results(self, xml_text: str) -> list[PrecedentSummary]:
         """검색 결과 XML 파싱"""
@@ -195,12 +365,10 @@ def save_results(details: list[PrecedentDetail], output_path: str | Path):
 
 
 if __name__ == "__main__":
-    # 테스트: 10건 크롤링
-    with LawAPIClient(oc="test") as client:
-        details = client.search_and_fetch("학원", max_results=10, delay=0.5)
+    with LawAPIClient() as client:
+        details = client.search_and_fetch("학원", max_results=10, delay=0.3)
         save_results(details, "data/test_precedents.json")
 
-        # 결과 미리보기
         for d in details[:3]:
             print(f"\n{'='*60}")
             print(f"사건명: {d.case_name}")

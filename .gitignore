@@ -20,6 +20,4 @@ wheels/
 *.png
 
 # Data (large files)
-data/chroma_db/
 data/pdfs/
-data/precedent_finder.db
