@@ -29,6 +29,16 @@ def get_store():
     return PrecedentStore()
 
 
+@st.cache_resource
+def get_chat_store():
+    """대화 기록용 DB (쓰기 가능한 경로)"""
+    from precedent_finder.db.store import PrecedentStore
+    # Streamlit Cloud는 /tmp만 쓰기 가능
+    import tempfile
+    chat_db = Path(tempfile.gettempdir()) / "precedent_finder_chat.db"
+    return PrecedentStore(db_path=chat_db)
+
+
 def get_qa_engine(llm_backend: str):
     """QAEngine 생성 (캐시하지 않음 — 백엔드 변경 가능)"""
     from precedent_finder.rag.retriever import Retriever
@@ -38,6 +48,7 @@ def get_qa_engine(llm_backend: str):
 
 
 store = get_store()
+chat_store = get_chat_store()
 
 # 세션 초기화
 if "messages" not in st.session_state:
@@ -54,7 +65,7 @@ def start_new_conversation():
 
 def load_conversation(conv_id: int):
     """저장된 대화 불러오기"""
-    msgs = store.get_conversation_messages(conv_id)
+    msgs = chat_store.get_conversation_messages(conv_id)
     st.session_state.messages = [
         {"role": m["role"], "content": m["content"], "sources": m.get("sources")}
         for m in msgs
@@ -105,7 +116,7 @@ with st.sidebar:
         st.rerun()
 
     try:
-        conversations = store.list_conversations(limit=20)
+        conversations = chat_store.list_conversations(limit=20)
         for conv in conversations:
             title = conv["title"] or f"대화 #{conv['id']}"
             created = conv["created_at"][:16] if conv["created_at"] else ""
@@ -117,7 +128,7 @@ with st.sidebar:
                     st.rerun()
             with col_del:
                 if st.button(":wastebasket:", key=f"del_{conv['id']}"):
-                    store.delete_conversation(conv["id"])
+                    chat_store.delete_conversation(conv["id"])
                     if st.session_state.conversation_id == conv["id"]:
                         start_new_conversation()
                     st.rerun()
@@ -162,10 +173,10 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 무등록 학원 운
     if st.session_state.conversation_id is None:
         # 첫 질문의 앞 30자를 제목으로
         title = prompt[:30] + ("..." if len(prompt) > 30 else "")
-        st.session_state.conversation_id = store.create_conversation(title)
+        st.session_state.conversation_id = chat_store.create_conversation(title)
 
     # 사용자 메시지 DB 저장
-    store.add_message(st.session_state.conversation_id, "user", prompt)
+    chat_store.add_message(st.session_state.conversation_id, "user", prompt)
 
     # 답변 생성
     with st.chat_message("assistant"):
@@ -177,7 +188,7 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 무등록 학원 운
                 answer_text = "벡터 DB가 없습니다. 먼저 터미널에서 `precedent-finder index`를 실행해주세요."
                 st.warning(answer_text)
                 st.session_state.messages.append({"role": "assistant", "content": answer_text})
-                store.add_message(st.session_state.conversation_id, "assistant", answer_text)
+                chat_store.add_message(st.session_state.conversation_id, "assistant", answer_text)
             else:
                 # 스트리밍 응답
                 chunks, stream = qa.ask_stream(prompt, top_k=top_k)
@@ -195,7 +206,7 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 무등록 학원 운
                 })
 
                 # DB 저장
-                store.add_message(
+                chat_store.add_message(
                     st.session_state.conversation_id, "assistant",
                     answer_text, sources=sources,
                 )
@@ -204,4 +215,4 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 무등록 학원 운
             error_msg = f"오류가 발생했습니다: {e}"
             st.error(error_msg)
             st.session_state.messages.append({"role": "assistant", "content": error_msg})
-            store.add_message(st.session_state.conversation_id, "assistant", error_msg)
+            chat_store.add_message(st.session_state.conversation_id, "assistant", error_msg)
