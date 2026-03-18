@@ -37,6 +37,31 @@ def get_qa_engine(llm_backend: str):
     return QAEngine(retriever=retriever, llm_backend=llm_backend)
 
 
+store = get_store()
+
+# 세션 초기화
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "conversation_id" not in st.session_state:
+    st.session_state.conversation_id = None
+
+
+def start_new_conversation():
+    """새 대화 시작"""
+    st.session_state.messages = []
+    st.session_state.conversation_id = None
+
+
+def load_conversation(conv_id: int):
+    """저장된 대화 불러오기"""
+    msgs = store.get_conversation_messages(conv_id)
+    st.session_state.messages = [
+        {"role": m["role"], "content": m["content"], "sources": m.get("sources")}
+        for m in msgs
+    ]
+    st.session_state.conversation_id = conv_id
+
+
 # --- 사이드바 ---
 
 with st.sidebar:
@@ -53,7 +78,6 @@ with st.sidebar:
     # 데이터 현황
     st.header("데이터 현황")
     try:
-        store = get_store()
         prec_count = store.count_precedents()
         stat_count = store.count_statutes()
 
@@ -71,29 +95,61 @@ with st.sidebar:
     except Exception as e:
         st.warning(f"DB 연결 실패: {e}")
 
+    st.divider()
+
+    # 대화 기록
+    st.header("대화 기록")
+
+    if st.button("새 대화", use_container_width=True):
+        start_new_conversation()
+        st.rerun()
+
+    try:
+        conversations = store.list_conversations(limit=20)
+        for conv in conversations:
+            title = conv["title"] or f"대화 #{conv['id']}"
+            created = conv["created_at"][:16] if conv["created_at"] else ""
+
+            col_title, col_del = st.columns([4, 1])
+            with col_title:
+                if st.button(f"{title}\n{created}", key=f"conv_{conv['id']}", use_container_width=True):
+                    load_conversation(conv["id"])
+                    st.rerun()
+            with col_del:
+                if st.button(":wastebasket:", key=f"del_{conv['id']}"):
+                    store.delete_conversation(conv["id"])
+                    if st.session_state.conversation_id == conv["id"]:
+                        start_new_conversation()
+                    st.rerun()
+    except Exception:
+        pass
+
 
 # --- 메인: 채팅 ---
 
 st.title(":balance_scale: 판례 파인더")
 st.caption("수집된 판례와 법령을 기반으로 법률 질의에 답변합니다.")
 
-# 대화 히스토리
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+
+def render_sources(sources):
+    """참고 자료 렌더링"""
+    if not sources:
+        return
+    with st.expander("참고 자료", expanded=False):
+        for src in sources:
+            if src["type"] == "precedent":
+                st.markdown(f"- **{src.get('court_name', '?')}** {src.get('judgment_date', '?')} "
+                            f"[{src.get('case_number', '?')}] {src.get('case_name', '')[:60]}")
+            else:
+                st.markdown(f"- **{src.get('law_name', '?')}** {src.get('article_number', '?')} "
+                            f"{src.get('article_title', '')}")
+
 
 # 히스토리 표시
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        if msg.get("sources"):
-            with st.expander("참고 자료", expanded=False):
-                for src in msg["sources"]:
-                    if src["type"] == "precedent":
-                        st.markdown(f"- **{src.get('court_name', '?')}** {src.get('judgment_date', '?')} "
-                                    f"[{src.get('case_number', '?')}] {src.get('case_name', '')[:60]}")
-                    else:
-                        st.markdown(f"- **{src.get('law_name', '?')}** {src.get('article_number', '?')} "
-                                    f"{src.get('article_title', '')}")
+        render_sources(msg.get("sources"))
 
 # 입력
 if prompt := st.chat_input("질문을 입력하세요 (예: 무등록 학원 운영 시 처벌은?)"):
@@ -102,6 +158,15 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 무등록 학원 운
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # 새 대화면 conversation 생성
+    if st.session_state.conversation_id is None:
+        # 첫 질문의 앞 30자를 제목으로
+        title = prompt[:30] + ("..." if len(prompt) > 30 else "")
+        st.session_state.conversation_id = store.create_conversation(title)
+
+    # 사용자 메시지 DB 저장
+    store.add_message(st.session_state.conversation_id, "user", prompt)
+
     # 답변 생성
     with st.chat_message("assistant"):
         try:
@@ -109,11 +174,10 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 무등록 학원 운
 
             # 벡터 DB 존재 확인
             if not Path("data/chroma_db").exists():
-                st.warning("벡터 DB가 없습니다. 먼저 `precedent-finder index`를 실행하세요.")
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": "벡터 DB가 없습니다. 먼저 터미널에서 `precedent-finder index`를 실행해주세요.",
-                })
+                answer_text = "벡터 DB가 없습니다. 먼저 터미널에서 `precedent-finder index`를 실행해주세요."
+                st.warning(answer_text)
+                st.session_state.messages.append({"role": "assistant", "content": answer_text})
+                store.add_message(st.session_state.conversation_id, "assistant", answer_text)
             else:
                 # 스트리밍 응답
                 chunks, stream = qa.ask_stream(prompt, top_k=top_k)
@@ -121,27 +185,23 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 무등록 학원 운
 
                 # 출처
                 sources = qa._extract_sources(chunks)
-                if sources:
-                    with st.expander("참고 자료", expanded=False):
-                        for src in sources:
-                            if src["type"] == "precedent":
-                                st.markdown(f"- **{src.get('court_name', '?')}** {src.get('judgment_date', '?')} "
-                                            f"[{src.get('case_number', '?')}] {src.get('case_name', '')[:60]}")
-                            else:
-                                st.markdown(f"- **{src.get('law_name', '?')}** {src.get('article_number', '?')} "
-                                            f"{src.get('article_title', '')}")
+                render_sources(sources)
 
-                # 히스토리 저장
+                # 세션 저장
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": answer_text,
                     "sources": sources,
                 })
 
+                # DB 저장
+                store.add_message(
+                    st.session_state.conversation_id, "assistant",
+                    answer_text, sources=sources,
+                )
+
         except Exception as e:
             error_msg = f"오류가 발생했습니다: {e}"
             st.error(error_msg)
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": error_msg,
-            })
+            st.session_state.messages.append({"role": "assistant", "content": error_msg})
+            store.add_message(st.session_state.conversation_id, "assistant", error_msg)

@@ -52,10 +52,27 @@ class PrecedentStore:
                 UNIQUE(law_name, article_number)
             );
 
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                sources TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_prec_case_number ON precedents(case_number);
             CREATE INDEX IF NOT EXISTS idx_prec_court ON precedents(court_name);
             CREATE INDEX IF NOT EXISTS idx_prec_date ON precedents(judgment_date);
             CREATE INDEX IF NOT EXISTS idx_statute_law ON statutes(law_name);
+            CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);
         """)
         self.conn.commit()
 
@@ -198,6 +215,61 @@ class PrecedentStore:
 
         print(f"[마이그레이션] {json_path} → {count}건 임포트")
         return count
+
+    # ------ 대화 기록 ------
+
+    def create_conversation(self, title: str = "") -> int:
+        """새 대화 생성, ID 반환"""
+        cur = self.conn.execute(
+            "INSERT INTO conversations (title) VALUES (?)", (title,)
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def update_conversation_title(self, conv_id: int, title: str):
+        """대화 제목 업데이트"""
+        self.conn.execute(
+            "UPDATE conversations SET title = ? WHERE id = ?", (title, conv_id)
+        )
+        self.conn.commit()
+
+    def add_message(self, conversation_id: int, role: str, content: str,
+                    sources: list[dict] | None = None) -> int:
+        """대화에 메시지 추가"""
+        sources_json = json.dumps(sources, ensure_ascii=False) if sources else None
+        cur = self.conn.execute(
+            "INSERT INTO messages (conversation_id, role, content, sources) VALUES (?, ?, ?, ?)",
+            (conversation_id, role, content, sources_json),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def list_conversations(self, limit: int = 50) -> list[dict]:
+        """대화 목록 조회 (최신순)"""
+        rows = self.conn.execute(
+            "SELECT * FROM conversations ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_conversation_messages(self, conversation_id: int) -> list[dict]:
+        """대화의 메시지 목록 조회"""
+        rows = self.conn.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at",
+            (conversation_id,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            msg = dict(r)
+            if msg["sources"]:
+                msg["sources"] = json.loads(msg["sources"])
+            result.append(msg)
+        return result
+
+    def delete_conversation(self, conversation_id: int):
+        """대화 삭제"""
+        self.conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+        self.conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+        self.conn.commit()
 
     # ------ 정리 ------
 
