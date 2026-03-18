@@ -32,7 +32,6 @@ def get_store():
 
 @st.cache_resource
 def get_chat_store():
-    """대화 기록용 DB (쓰기 가능한 경로)"""
     from precedent_finder.db.store import PrecedentStore
     import tempfile
     chat_db = Path(tempfile.gettempdir()) / "precedent_finder_chat.db"
@@ -40,25 +39,22 @@ def get_chat_store():
 
 
 def get_qa_engine(llm_backend: str):
-    """QAEngine 생성 (캐시하지 않음 — 백엔드 변경 가능)"""
     from precedent_finder.rag.retriever import Retriever
     from precedent_finder.rag.qa import QAEngine
     retriever = Retriever()
     return QAEngine(retriever=retriever, llm_backend=llm_backend)
 
 
-def extract_pdf_text(uploaded_file) -> str:
-    """업로드된 PDF에서 텍스트 추출"""
+def extract_pdf_text(file_data: bytes) -> str:
     try:
         import pdfplumber
         import io
-        with pdfplumber.open(io.BytesIO(uploaded_file.read())) as pdf:
+        with pdfplumber.open(io.BytesIO(file_data)) as pdf:
             texts = []
             for page in pdf.pages:
                 text = page.extract_text()
                 if text:
                     texts.append(text)
-            uploaded_file.seek(0)
             return "\n".join(texts)
     except ImportError:
         return "[PDF 텍스트 추출 실패: pdfplumber 미설치]"
@@ -66,31 +62,18 @@ def extract_pdf_text(uploaded_file) -> str:
         return f"[PDF 텍스트 추출 실패: {e}]"
 
 
-def encode_image_base64(uploaded_file) -> tuple[str, str]:
-    """업로드된 이미지를 base64로 인코딩"""
-    data = uploaded_file.read()
-    uploaded_file.seek(0)
-    b64 = base64.b64encode(data).decode("utf-8")
-    mime = uploaded_file.type or "image/png"
-    return b64, mime
-
-
 store = get_store()
 chat_store = get_chat_store()
 
-# 세션 초기화
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "conversation_id" not in st.session_state:
     st.session_state.conversation_id = None
-if "pending_files" not in st.session_state:
-    st.session_state.pending_files = []
 
 
 def start_new_conversation():
     st.session_state.messages = []
     st.session_state.conversation_id = None
-    st.session_state.pending_files = []
 
 
 def load_conversation(conv_id: int):
@@ -100,57 +83,41 @@ def load_conversation(conv_id: int):
         for m in msgs
     ]
     st.session_state.conversation_id = conv_id
-    st.session_state.pending_files = []
 
 
 # --- 사이드바 ---
 
 with st.sidebar:
     st.header("설정")
-
     llm_backend = "openai"
     st.markdown("**LLM**: OpenAI (gpt-5.4)")
-
     top_k = st.slider("참고 자료 수", min_value=3, max_value=15, value=5,
-                       help="질문 시 GPT에게 넘길 판례/법령 조각 수. 높을수록 답변이 정확하지만 느리고 비용이 증가합니다. 5~7 권장.")
+                       help="질문 시 GPT에게 넘길 판례/법령 조각 수. 5~7 권장.")
 
     st.divider()
-
-    # 데이터 현황
     st.header("데이터 현황")
     try:
         prec_count = store.count_precedents()
         stat_count = store.count_statutes()
-
         col1, col2 = st.columns(2)
         col1.metric("판례", f"{prec_count}건")
         col2.metric("법령 조문", f"{stat_count}건")
-
-        pdf_dir = Path("data/pdfs")
-        pdf_count = len(list(pdf_dir.glob("*.pdf"))) if pdf_dir.exists() else 0
         chroma_exists = Path("data/chroma_db").exists()
-
         col3, col4 = st.columns(2)
-        col3.metric("PDF", f"{pdf_count}개")
-        col4.metric("벡터 DB", "O" if chroma_exists else "X")
+        col3.metric("벡터 DB", "O" if chroma_exists else "X")
     except Exception as e:
         st.warning(f"DB 연결 실패: {e}")
 
     st.divider()
-
-    # 대화 기록
     st.header("대화 기록")
-
     if st.button("새 대화", use_container_width=True):
         start_new_conversation()
         st.rerun()
-
     try:
         conversations = chat_store.list_conversations(limit=20)
         for conv in conversations:
             title = conv["title"] or f"대화 #{conv['id']}"
             created = conv["created_at"][:16] if conv["created_at"] else ""
-
             col_title, col_del = st.columns([4, 1])
             with col_title:
                 if st.button(f"{title}\n{created}", key=f"conv_{conv['id']}", use_container_width=True):
@@ -169,7 +136,7 @@ with st.sidebar:
 # --- 메인: 채팅 ---
 
 st.title(":balance_scale: 판례 파인더")
-st.caption("수집된 판례와 법령을 기반으로 법률 질의에 답변합니다.")
+st.caption("수집된 판례와 법령을 기반으로 법률 질의에 답변합니다. 채팅창에 PDF/이미지를 첨부할 수 있습니다.")
 
 
 def render_sources(sources):
@@ -185,34 +152,15 @@ def render_sources(sources):
                             f"{src.get('article_title', '')}")
 
 
-def build_prompt_with_files(question: str, file_contexts: list[dict]) -> str:
-    if not file_contexts:
-        return question
-    parts = [question, "\n\n--- 첨부 파일 ---"]
-    for fc in file_contexts:
-        if fc["type"] == "pdf":
-            text = fc["text"][:8000]
-            parts.append(f"\n[PDF: {fc['name']}]\n{text}")
-        elif fc["type"] == "image":
-            parts.append(f"\n[이미지: {fc['name']}] (아래 이미지 참조)")
-    return "\n".join(parts)
-
-
-def call_openai_with_images(system_prompt: str, user_text: str,
-                            image_contexts: list[dict]):
+def call_openai_with_images(system_prompt, user_text, image_list):
     from openai import OpenAI
     client = OpenAI()
-
     content = [{"type": "text", "text": user_text}]
-    for img in image_contexts:
+    for b64, mime in image_list:
         content.append({
             "type": "image_url",
-            "image_url": {
-                "url": f"data:{img['mime']};base64,{img['base64']}",
-                "detail": "high",
-            },
+            "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "high"},
         })
-
     stream = client.chat.completions.create(
         model="gpt-5.4-2026-03-05",
         messages=[
@@ -231,71 +179,64 @@ def call_openai_with_images(system_prompt: str, user_text: str,
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        # 저장된 이미지 표시
         if msg.get("images"):
-            for img_data in msg["images"]:
-                st.image(f"data:{img_data['mime']};base64,{img_data['base64']}", width=300)
+            for img in msg["images"]:
+                st.image(f"data:{img['mime']};base64,{img['b64']}", width=300)
         render_sources(msg.get("sources"))
 
 
-# --- 입력 영역: 파일 업로드 + 텍스트 ---
-
-# 파일 업로드 (채팅 영역 바로 위)
-uploaded_files = st.file_uploader(
-    "파일 첨부 (PDF, 이미지)",
-    type=["pdf", "png", "jpg", "jpeg", "webp"],
-    accept_multiple_files=True,
-    label_visibility="collapsed",
-    key="file_uploader",
+# 채팅 입력 (파일 첨부 지원)
+chat_input = st.chat_input(
+    "질문을 입력하세요 (클립 아이콘으로 PDF/이미지 첨부 가능)",
+    accept_file="multiple",
+    file_type=["pdf", "png", "jpg", "jpeg", "webp"],
 )
 
-# 업로드된 파일 미리보기
-if uploaded_files:
-    cols = st.columns(min(len(uploaded_files), 4))
-    for i, f in enumerate(uploaded_files):
-        with cols[i % 4]:
-            if f.type and f.type.startswith("image/"):
-                st.image(f, caption=f.name, width=150)
-            else:
-                st.info(f"PDF: {f.name}")
+if chat_input:
+    prompt = chat_input.text or ""
+    attached_files = chat_input.files or []
 
-# 텍스트 입력
-if prompt := st.chat_input("질문을 입력하세요 (파일을 첨부하려면 위 영역을 사용하세요)"):
-    # 파일 처리
-    file_contexts = []
-    image_data_for_history = []
-    if uploaded_files:
-        for f in uploaded_files:
-            if f.type == "application/pdf":
-                text = extract_pdf_text(f)
-                file_contexts.append({"type": "pdf", "name": f.name, "text": text})
-            elif f.type and f.type.startswith("image/"):
-                b64, mime = encode_image_base64(f)
-                file_contexts.append({"type": "image", "name": f.name, "base64": b64, "mime": mime})
-                image_data_for_history.append({"base64": b64, "mime": mime})
+    # 첨부 파일 처리
+    pdf_texts = []
+    image_list = []       # [(b64, mime), ...]
+    image_history = []    # 히스토리 저장용
+    file_names = []
 
-    has_images = any(fc["type"] == "image" for fc in file_contexts)
-    has_files = len(file_contexts) > 0
+    for f in attached_files:
+        file_data = f.read()
+        file_names.append(f.name)
 
-    # 사용자 메시지 표시
+        if f.type == "application/pdf":
+            text = extract_pdf_text(file_data)
+            pdf_texts.append((f.name, text))
+        elif f.type and f.type.startswith("image/"):
+            b64 = base64.b64encode(file_data).decode("utf-8")
+            mime = f.type
+            image_list.append((b64, mime))
+            image_history.append({"b64": b64, "mime": mime})
+
+    # 사용자 메시지 구성
     display_text = prompt
-    if has_files:
-        file_names = [fc["name"] for fc in file_contexts]
-        display_text = f"{prompt}\n\n> 첨부: {', '.join(file_names)}"
+    if file_names:
+        display_text = f"{prompt}\n\n> 첨부: {', '.join(file_names)}" if prompt else f"> 첨부: {', '.join(file_names)}"
+
+    if not prompt and not file_names:
+        st.stop()
 
     user_msg = {"role": "user", "content": display_text}
-    if image_data_for_history:
-        user_msg["images"] = image_data_for_history
+    if image_history:
+        user_msg["images"] = image_history
     st.session_state.messages.append(user_msg)
 
     with st.chat_message("user"):
         st.markdown(display_text)
-        for img_data in image_data_for_history:
-            st.image(f"data:{img_data['mime']};base64,{img_data['base64']}", width=300)
+        for img in image_history:
+            st.image(f"data:{img['mime']};base64,{img['b64']}", width=300)
 
-    # 새 대화면 conversation 생성
+    # 대화 생성
     if st.session_state.conversation_id is None:
-        title = prompt[:30] + ("..." if len(prompt) > 30 else "")
+        title_text = prompt or file_names[0] if file_names else "새 대화"
+        title = title_text[:30] + ("..." if len(title_text) > 30 else "")
         st.session_state.conversation_id = chat_store.create_conversation(title)
 
     chat_store.add_message(st.session_state.conversation_id, "user", display_text)
@@ -311,16 +252,25 @@ if prompt := st.chat_input("질문을 입력하세요 (파일을 첨부하려면
                 st.session_state.messages.append({"role": "assistant", "content": answer_text})
                 chat_store.add_message(st.session_state.conversation_id, "assistant", answer_text)
             else:
-                full_prompt = build_prompt_with_files(prompt, file_contexts)
-                chunks, stream = qa.ask_stream(full_prompt, top_k=top_k)
+                # 질문에 PDF 텍스트 포함
+                full_prompt = prompt
+                if pdf_texts:
+                    pdf_parts = "\n\n--- 첨부 PDF ---"
+                    for name, text in pdf_texts:
+                        pdf_parts += f"\n[{name}]\n{text[:8000]}"
+                    full_prompt = f"{prompt}\n{pdf_parts}" if prompt else pdf_parts
+                if image_list:
+                    full_prompt += "\n\n(첨부된 이미지도 함께 분석해주세요)"
+
+                # RAG 검색
+                chunks, stream = qa.ask_stream(full_prompt or "첨부된 파일을 분석해주세요", top_k=top_k)
 
                 # 이미지가 있으면 Vision API로 대체
-                if has_images:
+                if image_list:
                     from precedent_finder.rag.qa import SYSTEM_PROMPT
                     context = qa._build_context(chunks)
                     user_text = f"[참고 자료]\n{context}\n\n[질문]\n{full_prompt}"
-                    image_contexts = [fc for fc in file_contexts if fc["type"] == "image"]
-                    stream = call_openai_with_images(SYSTEM_PROMPT, user_text, image_contexts)
+                    stream = call_openai_with_images(SYSTEM_PROMPT, user_text, image_list)
 
                 answer_text = st.write_stream(stream)
 
@@ -328,9 +278,7 @@ if prompt := st.chat_input("질문을 입력하세요 (파일을 첨부하려면
                 render_sources(sources)
 
                 st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": answer_text,
-                    "sources": sources,
+                    "role": "assistant", "content": answer_text, "sources": sources,
                 })
                 chat_store.add_message(
                     st.session_state.conversation_id, "assistant",
