@@ -90,7 +90,7 @@ def load_conversation(conv_id: int):
 with st.sidebar:
     st.header("설정")
     llm_backend = "openai"
-    st.markdown("**LLM**: OpenAI (gpt-5.4)")
+    st.markdown("**LLM**: OpenAI (gpt-5.5)")
     top_k = st.slider("참고 자료 수", min_value=3, max_value=15, value=5,
                        help="질문 시 GPT에게 넘길 판례/법령 조각 수. 5~7 권장.")
 
@@ -210,7 +210,7 @@ def call_openai_with_images(system_prompt, user_text, image_list):
             "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "high"},
         })
     stream = client.chat.completions.create(
-        model="gpt-5.4-2026-03-05",
+        model="gpt-5.5",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": content},
