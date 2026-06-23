@@ -253,6 +253,10 @@ def index():
             retriever.index_chunks(chunks)
             console.print(f"  벡터 DB 저장 완료")
 
+            # 반복 인덱싱으로 누적된 FTS 세그먼트/쓰기큐 정리 → 파일 크기 회수
+            retriever.compact()
+            console.print(f"  벡터 DB 압축 완료")
+
             console.print(f"\n[bold green]인덱싱 완료: 판례 {store.count_precedents()}건, 법령 {store.count_statutes()}건, 청크 {len(chunks)}개[/]")
         except ImportError as e:
             console.print(f"\n[yellow]벡터 DB 구축 건너뜀 (의존성 부족): {e}[/]")
