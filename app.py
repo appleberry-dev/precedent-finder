@@ -139,6 +139,54 @@ st.title(":balance_scale: 판례 파인더")
 st.caption("수집된 판례와 법령을 기반으로 법률 질의에 답변합니다. 채팅창에 PDF/이미지를 첨부할 수 있습니다.")
 
 
+# --- 업데이트 내역 ---
+
+LAST_UPDATED = "2026-06-23"
+
+# 최신 항목이 맨 위. 새 업데이트 시 맨 앞에 dict 추가.
+UPDATE_LOG = [
+    {
+        "date": "2026-06-23",
+        "items": [
+            "법제처 Open API로 판례 최신화 — 172건 재수집(중복 갱신·신규 추가)",
+            "법령 조문 갱신: **학원법 시행령**(별표 포함)·**평생교육법** 신규 수집",
+            "핵심 판례 최신 본문 반영 — 스터디카페(2021도16198), 댄스스포츠(2015두48655), "
+            "별표 한정(2014도13280·2008도3654), 유아 제외(2012도1268)",
+            "벡터 DB 재인덱싱 및 용량 최적화(55MB→36MB)",
+        ],
+    },
+    {
+        "date": "2026-04-09",
+        "items": [
+            "핵심 판례 7건 분석 정리 및 방어전략 문서 열람 페이지 추가",
+        ],
+    },
+]
+
+
+def render_update_log():
+    try:
+        prec_count = store.count_precedents()
+        stat_count = store.count_statutes()
+    except Exception:
+        prec_count = stat_count = None
+
+    with st.expander(f":calendar: 데이터 업데이트 내역 (최종 {LAST_UPDATED})", expanded=True):
+        if prec_count is not None:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("판례", f"{prec_count}건")
+            c2.metric("법령 조문", f"{stat_count}건")
+            c3.metric("최종 업데이트", LAST_UPDATED)
+        for entry in UPDATE_LOG:
+            st.markdown(f"**{entry['date']}**")
+            for item in entry["items"]:
+                st.markdown(f"- {item}")
+        st.caption("출처: 법제처 국가법령정보 Open API (law.go.kr)")
+
+
+render_update_log()
+
+
 def render_sources(sources):
     if not sources:
         return
