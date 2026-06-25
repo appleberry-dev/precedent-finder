@@ -21,8 +21,91 @@ def get_store():
 
 store = get_store()
 
+# --- 공통 라벨/렌더 ---
+TYPE_LABELS = {
+    "opinion": ":scales: 변호인 의견서",
+    "precedent_ref": ":mag: 참고판례 정리",
+    "defense": ":shield: 방어 논리",
+    "company": ":office: 회사 기초정보",
+    "contract": ":page_facing_up: 계약서",
+    "notice": ":bell: 학부모 안내",
+    "evidence": ":camera_with_flash: 현장 증거",
+    "book": ":books: 도서·서지(ISBN)",
+    "product": ":package: 콘텐츠 상품",
+    "promo": ":star2: 브랜드 홍보",
+    "blog": ":memo: 블로그",
+    "news": ":newspaper: 뉴스 기사",
+    "youtube": ":tv: 유튜브",
+    "sns": ":camera: SNS",
+    "manual": ":pushpin: 메모",
+    "research": ":mag: 업계조사",
+    "reference": ":books: 참고자료",
+    "web": ":globe_with_meridians: 웹",
+}
+# 마크다운으로 렌더할 유형 (그 외는 일반 텍스트)
+_MD_TYPES = {"opinion", "precedent_ref", "defense", "company"}
+
+
+def render_doc_body(d):
+    """문서 한 건의 본문(링크·이미지·내용)을 렌더한다."""
+    stype = d.get("source_type", "web")
+    if d.get("url"):
+        st.markdown(f":link: [원문 보기]({d['url']})")
+
+    meta = {}
+    if d.get("metadata"):
+        try:
+            meta = json.loads(d["metadata"])
+        except (ValueError, TypeError):
+            meta = {}
+
+    # 도서: 이미지 갤러리(표지+본문) / 그 외: 단일 이미지
+    gallery = [p for p in meta.get("image_paths", []) if Path(p).exists()]
+    if gallery:
+        cols = st.columns(3)
+        for i, p in enumerate(gallery):
+            cols[i % 3].image(p, use_container_width=True)
+    else:
+        img_path = meta.get("image_path", "")
+        if img_path and Path(img_path).exists():
+            st.image(img_path, use_container_width=True)
+
+    content = d.get("content", "")
+    if stype in _MD_TYPES:
+        st.markdown(content)
+    else:
+        st.text(content[:5000] + ("..." if len(content) > 5000 else ""))
+
+
 # --- 탭 ---
-tab_prec, tab_statute, tab_company, tab_search = st.tabs(["판례", "법령", "회사정보·자료", "검색"])
+tab_opinion, tab_company, tab_prec, tab_statute, tab_search = st.tabs(
+    [":shield: 의견서·참고자료", "수집 자료", "판례", "법령", "검색"]
+)
+
+# --- 의견서·참고자료 탭 ---
+with tab_opinion:
+    docs = store.list_documents()
+    opinions = [d for d in docs if d.get("source_type") == "opinion"]
+    refs = [d for d in docs if d.get("source_type") == "precedent_ref"]
+
+    st.subheader(":scales: 변호인 의견서 초안")
+    st.caption("수집 자료(사업자등록·계약서·약관·키즈노트·현장사진·ISBN 교재)와 판례를 토대로 작성된 초안입니다.")
+    if not opinions:
+        st.info("아직 작성된 의견서가 없습니다.")
+    for d in sorted(opinions, key=lambda x: x.get("id", 0), reverse=True):
+        title = d.get("title") or "(제목 없음)"
+        with st.expander(f":scales: {title}", expanded=True):
+            render_doc_body(d)
+
+    st.divider()
+    st.subheader(":mag: 참고판례·법령 정리")
+    st.caption("의견서가 인용하는 핵심 판례를 유리/불리로 정리했습니다. (원문은 '판례' 탭에서 사건번호로 조회)")
+    if not refs:
+        st.info("아직 정리된 참고판례가 없습니다.")
+    for d in refs:
+        title = d.get("title") or "(제목 없음)"
+        with st.expander(f":mag: {title}", expanded=True):
+            render_doc_body(d)
 
 # --- 판례 탭 ---
 with tab_prec:
@@ -123,50 +206,34 @@ with tab_company:
             "`precedent-finder add-url <URL> --type news` 로 수집하세요."
         )
     else:
-        type_labels = {
-            "defense": ":shield: 방어 논리",
-            "company": ":office: 회사 기초정보",
-            "contract": ":page_facing_up: 계약서",
-            "notice": ":bell: 학부모 안내",
-            "evidence": ":camera_with_flash: 현장 증거",
-            "book": ":books: 도서·서지(ISBN)",
-            "product": ":package: 콘텐츠 상품",
-            "promo": ":star2: 브랜드 홍보",
-            "blog": ":memo: 블로그",
-            "news": ":newspaper: 뉴스 기사",
-            "youtube": ":tv: 유튜브",
-            "sns": ":camera: SNS",
-            "manual": ":pushpin: 메모",
-            "research": ":mag: 업계조사",
-            "reference": ":books: 참고자료",
-            "web": ":globe_with_meridians: 웹",
-        }
+        # 의견서·참고판례는 전용 탭에서 표시 → 여기서는 제외
+        documents = [d for d in documents if d.get("source_type") not in ("opinion", "precedent_ref")]
 
         # 유형별 건수 요약
         counts = {}
         for d in documents:
             counts[d.get("source_type", "web")] = counts.get(d.get("source_type", "web"), 0) + 1
-        summary = " · ".join(f"{type_labels.get(t, t)} {c}건" for t, c in counts.items())
+        summary = " · ".join(f"{TYPE_LABELS.get(t, t)} {c}건" for t, c in counts.items())
         st.caption(f"총 {len(documents)}건  |  {summary}")
 
-        # 유형 필터 (회사정보·브랜드홍보를 앞으로)
+        # 유형 필터 (방어·회사정보를 앞으로)
         _order = {"defense": 0, "company": 1, "contract": 2, "notice": 3,
                   "evidence": 4, "book": 5, "product": 6, "promo": 7}
         types = sorted(counts.keys(), key=lambda t: (_order.get(t, 2), t))
         type_filter = st.selectbox(
             "자료 유형",
             ["전체"] + types,
-            format_func=lambda t: "전체" if t == "전체" else type_labels.get(t, t),
+            format_func=lambda t: "전체" if t == "전체" else TYPE_LABELS.get(t, t),
         )
 
         shown = documents if type_filter == "전체" else [d for d in documents if d.get("source_type") == type_filter]
 
-        # 회사 기초정보·브랜드 홍보를 항상 위로
+        # 방어 논리·회사 기초정보를 항상 위로
         shown = sorted(shown, key=lambda d: (_order.get(d.get("source_type"), 2), d.get("id", 0)))
 
         for d in shown:
             stype = d.get("source_type", "web")
-            badge = type_labels.get(stype, stype)
+            badge = TYPE_LABELS.get(stype, stype)
             title = d.get("title") or "(제목 없음)"
             pub = d.get("published_date", "")
             header = f"{badge}  ·  {title[:70]}"
@@ -174,34 +241,7 @@ with tab_company:
                 header += f"  ·  {pub[:16]}"
 
             with st.expander(header, expanded=(stype in ("defense", "company"))):
-                if d.get("url"):
-                    st.markdown(f":link: [원문 보기]({d['url']})")
-
-                # metadata 파싱 (이미지·ISBN 등)
-                meta = {}
-                if d.get("metadata"):
-                    try:
-                        meta = json.loads(d["metadata"])
-                    except (ValueError, TypeError):
-                        meta = {}
-
-                # 도서: 이미지 갤러리 (표지+본문) / 그 외: 단일 이미지
-                gallery = [p for p in meta.get("image_paths", []) if Path(p).exists()]
-                if gallery:
-                    cols = st.columns(3)
-                    for i, p in enumerate(gallery):
-                        cols[i % 3].image(p, use_container_width=True)
-                else:
-                    img_path = meta.get("image_path", "")
-                    if img_path and Path(img_path).exists():
-                        st.image(img_path, use_container_width=True)
-
-                content = d.get("content", "")
-                # 방어 논리·회사정보는 마크다운, 그 외는 일반 텍스트
-                if stype in ("defense", "company"):
-                    st.markdown(content)
-                else:
-                    st.text(content[:5000] + ("..." if len(content) > 5000 else ""))
+                render_doc_body(d)
 
 
 # --- 검색 탭 ---

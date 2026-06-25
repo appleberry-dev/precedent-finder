@@ -169,6 +169,7 @@ class Chunker:
             "research": "업계조사", "reference": "참고자료", "promo": "브랜드홍보",
             "defense": "방어논리", "contract": "계약서", "notice": "학부모안내",
             "evidence": "현장증거", "book": "도서·서지", "product": "콘텐츠상품",
+            "opinion": "변호인의견서", "precedent_ref": "참고판례정리",
         }.get(source_type, "문서")
         full_text = f"[{type_label}] {title}\n{text}" if title else f"[{type_label}]\n{text}"
         parts = self._split_text(full_text)
