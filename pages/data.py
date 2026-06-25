@@ -63,16 +63,17 @@ def render_doc_body(d):
         except (ValueError, TypeError):
             meta = {}
 
-    # 도서: 이미지 갤러리(표지+본문) / 그 외: 단일 이미지
-    gallery = [p for p in meta.get("image_paths", []) if Path(p).exists()]
-    if gallery:
+    # 이미지(표지+본문/현장사진 등) — 각 이미지에 증거맥락 캡션 표시
+    caps = meta.get("image_captions", {})
+    paths = list(meta.get("image_paths", []))
+    if meta.get("image_path") and meta["image_path"] not in paths:
+        paths.insert(0, meta["image_path"])
+    paths = [p for p in dict.fromkeys(paths) if Path(p).exists()]
+    if paths:
         cols = st.columns(3)
-        for i, p in enumerate(gallery):
-            cols[i % 3].image(p, use_container_width=True)
-    else:
-        img_path = meta.get("image_path", "")
-        if img_path and Path(img_path).exists():
-            st.image(img_path, use_container_width=True)
+        for i, p in enumerate(paths):
+            cap = caps.get(Path(p).name) or Path(p).name
+            cols[i % 3].image(p, caption=cap, use_container_width=True)
 
     content = d.get("content", "")
     if stype in _MD_TYPES:
@@ -82,22 +83,22 @@ def render_doc_body(d):
 
 
 def doc_images(d):
-    """문서에서 실제 존재하는 이미지 경로 목록을 반환."""
+    """문서에서 실제 존재하는 (이미지경로, 증거맥락 캡션) 목록을 반환."""
     meta = {}
     if d.get("metadata"):
         try:
             meta = json.loads(d["metadata"])
         except (ValueError, TypeError):
             meta = {}
+    caps = meta.get("image_captions", {})
     paths = list(meta.get("image_paths", []))
     if meta.get("image_path"):
         paths.insert(0, meta["image_path"])
-    # 중복 제거 + 존재하는 것만
     seen, out = set(), []
     for p in paths:
         if p and p not in seen and Path(p).exists():
             seen.add(p)
-            out.append(p)
+            out.append((p, caps.get(Path(p).name) or Path(p).name))
     return out
 
 
@@ -136,8 +137,8 @@ with tab_images:
             badge = TYPE_LABELS.get(stype, stype)
             st.markdown(f"**{badge} · {d.get('title') or '(제목 없음)'}**  ·  {len(imgs)}장")
             cols = st.columns(3)
-            for i, p in enumerate(imgs):
-                cols[i % 3].image(p, caption=Path(p).name, use_container_width=True)
+            for i, (p, cap) in enumerate(imgs):
+                cols[i % 3].image(p, caption=cap, use_container_width=True)
             st.divider()
 
 # --- 의견서·참고자료 탭 ---
