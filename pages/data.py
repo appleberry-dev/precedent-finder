@@ -20,7 +20,7 @@ def get_store():
 store = get_store()
 
 # --- 탭 ---
-tab_prec, tab_statute, tab_search = st.tabs(["판례", "법령", "검색"])
+tab_prec, tab_statute, tab_company, tab_search = st.tabs(["판례", "법령", "회사정보·자료", "검색"])
 
 # --- 판례 탭 ---
 with tab_prec:
@@ -109,6 +109,69 @@ with tab_statute:
 
             with st.expander(header):
                 st.text(s.get("content", ""))
+
+# --- 회사정보·자료 탭 ---
+with tab_company:
+    documents = store.list_documents()
+
+    if not documents:
+        st.info(
+            "수집된 회사 자료가 없습니다.\n\n"
+            "`precedent-finder crawl-company` (홈페이지+블로그) 또는 "
+            "`precedent-finder add-url <URL> --type news` 로 수집하세요."
+        )
+    else:
+        type_labels = {
+            "company": ":office: 회사 기초정보",
+            "blog": ":memo: 블로그",
+            "news": ":newspaper: 뉴스 기사",
+            "youtube": ":tv: 유튜브",
+            "sns": ":camera: SNS",
+            "manual": ":pushpin: 메모",
+            "research": ":mag: 업계조사",
+            "reference": ":books: 참고자료",
+            "web": ":globe_with_meridians: 웹",
+        }
+
+        # 유형별 건수 요약
+        counts = {}
+        for d in documents:
+            counts[d.get("source_type", "web")] = counts.get(d.get("source_type", "web"), 0) + 1
+        summary = " · ".join(f"{type_labels.get(t, t)} {c}건" for t, c in counts.items())
+        st.caption(f"총 {len(documents)}건  |  {summary}")
+
+        # 유형 필터
+        types = sorted(counts.keys(), key=lambda t: (t != "company", t))
+        type_filter = st.selectbox(
+            "자료 유형",
+            ["전체"] + types,
+            format_func=lambda t: "전체" if t == "전체" else type_labels.get(t, t),
+        )
+
+        shown = documents if type_filter == "전체" else [d for d in documents if d.get("source_type") == type_filter]
+
+        # 회사 기초정보를 항상 위로
+        shown = sorted(shown, key=lambda d: (d.get("source_type") != "company", d.get("id", 0)))
+
+        for d in shown:
+            stype = d.get("source_type", "web")
+            badge = type_labels.get(stype, stype)
+            title = d.get("title") or "(제목 없음)"
+            pub = d.get("published_date", "")
+            header = f"{badge}  ·  {title[:70]}"
+            if pub:
+                header += f"  ·  {pub[:16]}"
+
+            with st.expander(header, expanded=(stype == "company")):
+                if d.get("url"):
+                    st.markdown(f":link: [원문 보기]({d['url']})")
+                content = d.get("content", "")
+                # 회사 기초정보는 마크다운 그대로, 그 외는 일반 텍스트
+                if stype == "company":
+                    st.markdown(content)
+                else:
+                    st.text(content[:5000] + ("..." if len(content) > 5000 else ""))
+
 
 # --- 검색 탭 ---
 with tab_search:

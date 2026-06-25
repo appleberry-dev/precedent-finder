@@ -19,5 +19,9 @@ wheels/
 # Screenshots
 *.png
 
+# macOS / 작업 임시
+.DS_Store
+scratch_logs/
+
 # Data (large files)
 data/pdfs/

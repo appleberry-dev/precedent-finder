@@ -100,11 +100,13 @@ class Retriever:
     def compact(self):
         """벡터 DB(chroma.sqlite3) 압축.
 
-        반복 인덱싱 시 ChromaDB가 FTS 세그먼트를 병합 없이 누적하고
-        쓰기 큐(embeddings_queue)도 남겨 파일이 비대해진다. 인덱싱 직후
-        FTS 병합 + 큐 비우기 + VACUUM으로 죽은 공간을 회수한다.
-        (예: 55MB → 36MB). 내부 테이블명은 chroma 버전에 따라 다를 수
-        있으므로 각 단계를 방어적으로 처리한다.
+        반복 인덱싱 시 ChromaDB가 FTS 세그먼트를 병합 없이 누적해 파일이
+        비대해진다. FTS 병합 + VACUUM으로 죽은 공간을 회수한다(예: 55MB→36MB).
+        내부 테이블명은 chroma 버전에 따라 다를 수 있으므로 방어적으로 처리한다.
+
+        주의: embeddings_queue(쓰기 WAL)는 절대 삭제하지 않는다. 소량 배치는
+        HNSW 세그먼트로 flush되기 전 이 큐에 남아 있을 수 있어, 삭제하면
+        방금 인덱싱한 벡터가 유실된다.
         """
         import sqlite3
 
@@ -118,15 +120,13 @@ class Retriever:
 
         conn = sqlite3.connect(str(db_file), timeout=30.0)
         try:
-            for stmt in (
-                "INSERT INTO embedding_fulltext_search(embedding_fulltext_search) VALUES('optimize')",
-                "DELETE FROM embeddings_queue",
-            ):
-                try:
-                    conn.execute(stmt)
-                    conn.commit()
-                except sqlite3.OperationalError as e:
-                    print(f"  [압축] 건너뜀: {e}")
+            try:
+                conn.execute(
+                    "INSERT INTO embedding_fulltext_search(embedding_fulltext_search) VALUES('optimize')"
+                )
+                conn.commit()
+            except sqlite3.OperationalError as e:
+                print(f"  [압축] 건너뜀: {e}")
             conn.execute("VACUUM")
         finally:
             conn.close()

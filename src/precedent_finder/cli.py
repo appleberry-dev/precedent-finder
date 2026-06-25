@@ -167,6 +167,12 @@ def status():
         for law, cnt in store.count_statutes_by_law():
             table.add_row(f"  {law}", str(cnt))
 
+        # 문서 (회사정보/블로그/뉴스 등)
+        doc_count = store.count_documents()
+        table.add_row("수집 문서 수", str(doc_count))
+        for dtype, cnt in store.count_documents_by_type():
+            table.add_row(f"  {dtype}", str(cnt))
+
         # PDF
         pdf_dir = Path("data/pdfs")
         pdf_count = len(list(pdf_dir.glob("*.pdf"))) if pdf_dir.exists() else 0
@@ -220,11 +226,34 @@ def search(
 
 
 @app.command()
-def index():
+def index(
+    only: str = typer.Option(
+        "all",
+        help="인덱싱 범위: all(전체 재구축) | documents(회사정보/블로그/뉴스 문서만)",
+    ),
+):
     """데이터 인덱싱 (JSON→DB 마이그레이션 + 벡터 DB 구축)"""
     store = _get_store()
 
     try:
+        # documents만 인덱싱: 판례/법령 재임베딩 없이 문서 청크만 upsert (비용·시간 절약)
+        if only == "documents":
+            from precedent_finder.rag.chunker import Chunker
+            from precedent_finder.rag.retriever import Retriever
+
+            console.print("[bold cyan]문서(documents)만 벡터 DB 인덱싱...[/]")
+            chunker = Chunker()
+            chunks = []
+            for doc in store.list_documents():
+                chunks.extend(chunker.chunk_document(doc))
+            console.print(f"  문서 {store.count_documents()}건 → 청크 {len(chunks)}개")
+
+            retriever = Retriever()
+            retriever.index_chunks(chunks)
+            retriever.compact()
+            console.print(f"[bold green]문서 인덱싱 완료: 청크 {len(chunks)}개[/]")
+            return
+
         # 1) JSON → DB 마이그레이션
         json_path = Path("data/precedents.json")
         if json_path.exists():
@@ -257,10 +286,121 @@ def index():
             retriever.compact()
             console.print(f"  벡터 DB 압축 완료")
 
-            console.print(f"\n[bold green]인덱싱 완료: 판례 {store.count_precedents()}건, 법령 {store.count_statutes()}건, 청크 {len(chunks)}개[/]")
+            console.print(f"\n[bold green]인덱싱 완료: 판례 {store.count_precedents()}건, 법령 {store.count_statutes()}건, 문서 {store.count_documents()}건, 청크 {len(chunks)}개[/]")
         except ImportError as e:
             console.print(f"\n[yellow]벡터 DB 구축 건너뜀 (의존성 부족): {e}[/]")
             console.print("[dim]chromadb, ollama 설치 후 다시 실행하세요[/]")
+    finally:
+        store.close()
+
+
+@app.command(name="add-url")
+def add_url(
+    url: str = typer.Argument(help="수집할 URL (홈페이지/뉴스/유튜브 등)"),
+    type: str = typer.Option("web", "--type", "-t",
+                             help="문서 유형: company, news, youtube, sns, web"),
+):
+    """단일 URL을 수집해 문서로 저장"""
+    from precedent_finder.crawlers.web_collector import collect_url
+    from dataclasses import asdict
+
+    store = _get_store()
+    try:
+        console.print(f"[cyan]수집 중: {url}[/]")
+        doc = collect_url(url, source_type=type)
+        if not doc.content.strip():
+            console.print("[yellow]본문을 추출하지 못했습니다. (JS 렌더링/로그인 필요 페이지일 수 있음)[/]")
+            return
+        d = asdict(doc)
+        d["doc_key"] = doc.doc_key
+        store.upsert_document(d, source="web")
+        console.print(f"[green]저장 완료: [{doc.source_type}] {doc.title[:60]}[/]")
+        console.print(f"  본문 {len(doc.content)}자")
+        console.print("[dim]벡터 DB 반영: precedent-finder index --only documents[/]")
+    finally:
+        store.close()
+
+
+@app.command(name="add-text")
+def add_text(
+    title: str = typer.Option(..., "--title", help="문서 제목"),
+    file: str = typer.Option("", "--file", "-f", help="텍스트/마크다운 파일 경로"),
+    text: str = typer.Option("", "--text", help="직접 입력할 본문"),
+    type: str = typer.Option("manual", "--type", "-t", help="문서 유형 (company, manual 등)"),
+):
+    """수동 텍스트/파일을 문서로 저장 (회사 기초정보 등)"""
+    if file:
+        content = Path(file).read_text(encoding="utf-8")
+    elif text:
+        content = text
+    else:
+        console.print("[red]--file 또는 --text 중 하나는 필요합니다.[/]")
+        raise typer.Exit(1)
+
+    store = _get_store()
+    try:
+        store.upsert_document({
+            "doc_key": f"manual:{title}",
+            "source_type": type,
+            "title": title,
+            "content": content,
+        }, source="manual")
+        console.print(f"[green]저장 완료: [{type}] {title} ({len(content)}자)[/]")
+        console.print("[dim]벡터 DB 반영: precedent-finder index --only documents[/]")
+    finally:
+        store.close()
+
+
+@app.command(name="crawl-company")
+def crawl_company(
+    homepage: str = typer.Option("https://www.appleberryenglish.co.kr", help="홈페이지 URL"),
+    blog: str = typer.Option("appleberry_dongtan", help="네이버 블로그 ID 또는 URL"),
+    max_posts: int = typer.Option(30, "--max", help="블로그 글 최대 수집 수"),
+):
+    """회사 홈페이지 하위 페이지 + 네이버 블로그를 일괄 수집"""
+    from precedent_finder.crawlers import web_collector
+    from dataclasses import asdict
+    from urllib.parse import urljoin
+
+    store = _get_store()
+    saved = 0
+    try:
+        # 1) 홈페이지 주요 하위 페이지
+        sub_pages = [
+            "/sub/company/company01.php", "/sub/company/company02.php",
+            "/sub/contents/contents01.php", "/sub/contents/contents02.php",
+            "/sub/contents/contents03.php", "/sub/program/program01-1.php",
+            "/sub/program/program02.php",
+        ]
+        console.print("[bold cyan]1/2. 홈페이지 수집[/]")
+        for path in [""] + sub_pages:
+            full = urljoin(homepage, path) if path else homepage
+            try:
+                doc = web_collector.fetch_page(full, source_type="company")
+                if doc.content.strip():
+                    d = asdict(doc)
+                    d["doc_key"] = doc.doc_key
+                    store.upsert_document(d, source="homepage")
+                    saved += 1
+                    console.print(f"  ✓ {doc.title[:50]} ({len(doc.content)}자)")
+            except Exception as e:
+                console.print(f"  [yellow]건너뜀 {full}: {e}[/]")
+
+        # 2) 네이버 블로그
+        console.print(f"\n[bold cyan]2/2. 네이버 블로그 수집 (최대 {max_posts}건)[/]")
+        try:
+            posts = web_collector.fetch_naver_blog_posts(blog, max_posts=max_posts)
+            for doc in posts:
+                d = asdict(doc)
+                d["doc_key"] = doc.doc_key
+                store.upsert_document(d, source="naver_blog")
+                saved += 1
+            console.print(f"  ✓ 블로그 글 {len(posts)}건 수집")
+        except Exception as e:
+            console.print(f"  [yellow]블로그 수집 실패: {e}[/]")
+
+        console.print(f"\n[bold green]완료: 문서 {saved}건 저장 (DB 총 문서 {store.count_documents()}건)[/]")
+        console.print("[dim]벡터 DB 반영: precedent-finder index --only documents[/]")
     finally:
         store.close()
 

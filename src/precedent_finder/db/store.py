@@ -52,6 +52,20 @@ class PrecedentStore:
                 UNIQUE(law_name, article_number)
             );
 
+            CREATE TABLE IF NOT EXISTS documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                doc_key TEXT UNIQUE,
+                source_type TEXT,
+                title TEXT,
+                url TEXT,
+                published_date TEXT,
+                content TEXT,
+                summary TEXT,
+                metadata TEXT,
+                source TEXT DEFAULT 'web',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT,
@@ -72,6 +86,7 @@ class PrecedentStore:
             CREATE INDEX IF NOT EXISTS idx_prec_court ON precedents(court_name);
             CREATE INDEX IF NOT EXISTS idx_prec_date ON precedents(judgment_date);
             CREATE INDEX IF NOT EXISTS idx_statute_law ON statutes(law_name);
+            CREATE INDEX IF NOT EXISTS idx_doc_type ON documents(source_type);
             CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);
         """)
         self.conn.commit()
@@ -194,6 +209,66 @@ class PrecedentStore:
             "SELECT law_name, COUNT(*) as cnt FROM statutes GROUP BY law_name ORDER BY cnt DESC"
         ).fetchall()
         return [(r["law_name"], r["cnt"]) for r in rows]
+
+    # ------ 문서 CRUD (회사 정보/블로그/뉴스/유튜브 등) ------
+
+    def upsert_document(self, doc: dict, source: str = "web") -> int:
+        """문서 저장 (doc_key 중복 시 업데이트).
+
+        doc_key: 중복 판별 키 (URL 또는 수동 슬러그). 없으면 url 사용.
+        metadata: dict면 JSON 직렬화.
+        """
+        doc_key = doc.get("doc_key") or doc.get("url") or doc.get("title", "")
+        metadata = doc.get("metadata")
+        if isinstance(metadata, (dict, list)):
+            metadata = json.dumps(metadata, ensure_ascii=False)
+
+        cur = self.conn.execute("""
+            INSERT INTO documents (
+                doc_key, source_type, title, url, published_date,
+                content, summary, metadata, source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(doc_key) DO UPDATE SET
+                source_type = COALESCE(NULLIF(excluded.source_type, ''), source_type),
+                title = COALESCE(NULLIF(excluded.title, ''), title),
+                url = COALESCE(NULLIF(excluded.url, ''), url),
+                published_date = COALESCE(NULLIF(excluded.published_date, ''), published_date),
+                content = COALESCE(NULLIF(excluded.content, ''), content),
+                summary = COALESCE(NULLIF(excluded.summary, ''), summary),
+                metadata = COALESCE(NULLIF(excluded.metadata, ''), metadata)
+        """, (
+            doc_key,
+            doc.get("source_type", "web"),
+            doc.get("title", ""),
+            doc.get("url", ""),
+            doc.get("published_date", ""),
+            doc.get("content", ""),
+            doc.get("summary", ""),
+            metadata or "",
+            source,
+        ))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def list_documents(self, source_type: str | None = None) -> list[dict]:
+        """문서 목록 (source_type 필터 가능)"""
+        if source_type:
+            rows = self.conn.execute(
+                "SELECT * FROM documents WHERE source_type = ? ORDER BY id", (source_type,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute("SELECT * FROM documents ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+
+    def count_documents(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+
+    def count_documents_by_type(self) -> list[tuple[str, int]]:
+        rows = self.conn.execute(
+            "SELECT source_type, COUNT(*) as cnt FROM documents "
+            "GROUP BY source_type ORDER BY cnt DESC"
+        ).fetchall()
+        return [(r["source_type"] or "미상", r["cnt"]) for r in rows]
 
     # ------ 마이그레이션 ------
 

@@ -144,8 +144,47 @@ class Chunker:
 
         return chunks
 
+    def chunk_document(self, doc: dict) -> list[Chunk]:
+        """일반 문서(회사정보/블로그/뉴스/유튜브 등) 1건을 청크로 분할"""
+        chunks = []
+        doc_id = doc.get("id", 0)
+        source_type = doc.get("source_type", "web")
+        title = doc.get("title", "")
+
+        base_metadata = {
+            "source_type": source_type,
+            "title": title,
+            "url": doc.get("url", ""),
+            "published_date": doc.get("published_date", ""),
+        }
+
+        text = doc.get("content", "") or doc.get("summary", "")
+        if not text:
+            return []
+
+        # 제목을 본문 앞에 붙여 검색 맥락 강화
+        type_label = {
+            "company": "회사정보", "blog": "블로그", "news": "뉴스기사",
+            "youtube": "유튜브", "sns": "SNS", "manual": "메모",
+            "research": "업계조사", "reference": "참고자료",
+        }.get(source_type, "문서")
+        full_text = f"[{type_label}] {title}\n{text}" if title else f"[{type_label}]\n{text}"
+        parts = self._split_text(full_text)
+
+        for i, part in enumerate(parts):
+            chunks.append(Chunk(
+                id=f"document_{doc_id}_{i}",
+                source_type="document",
+                source_id=doc_id,
+                chunk_index=i,
+                content=part,
+                metadata={**base_metadata, "doc_type": source_type},
+            ))
+
+        return chunks
+
     def chunk_all(self, store) -> list[Chunk]:
-        """DB의 모든 판례+법령을 청킹"""
+        """DB의 모든 판례+법령+문서를 청킹"""
         all_chunks = []
 
         # 판례
@@ -155,5 +194,10 @@ class Chunker:
         # 법령
         for statute in store.list_statutes():
             all_chunks.extend(self.chunk_statute(statute))
+
+        # 일반 문서 (회사정보/블로그/뉴스 등)
+        if hasattr(store, "list_documents"):
+            for doc in store.list_documents():
+                all_chunks.extend(self.chunk_document(doc))
 
         return all_chunks
