@@ -47,7 +47,7 @@ TYPE_LABELS = {
     "web": ":globe_with_meridians: 웹",
 }
 # 마크다운으로 렌더할 유형 (그 외는 일반 텍스트)
-_MD_TYPES = {"opinion", "precedent_ref", "defense", "company"}
+_MD_TYPES = {"opinion", "precedent_ref", "defense", "company", "research"}
 
 
 def render_doc_body(d):
