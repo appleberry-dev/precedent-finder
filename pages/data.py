@@ -185,10 +185,16 @@ with tab_company:
                     except (ValueError, TypeError):
                         meta = {}
 
-                # 현장 증거: 이미지 표시
-                img_path = meta.get("image_path", "")
-                if img_path and Path(img_path).exists():
-                    st.image(img_path, use_container_width=True)
+                # 도서: 이미지 갤러리 (표지+본문) / 그 외: 단일 이미지
+                gallery = [p for p in meta.get("image_paths", []) if Path(p).exists()]
+                if gallery:
+                    cols = st.columns(3)
+                    for i, p in enumerate(gallery):
+                        cols[i % 3].image(p, use_container_width=True)
+                else:
+                    img_path = meta.get("image_path", "")
+                    if img_path and Path(img_path).exists():
+                        st.image(img_path, use_container_width=True)
 
                 content = d.get("content", "")
                 # 방어 논리·회사정보는 마크다운, 그 외는 일반 텍스트
