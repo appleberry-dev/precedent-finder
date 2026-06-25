@@ -13,8 +13,12 @@ st.set_page_config(page_title="데이터 관리", page_icon=":card_file_box:", l
 st.title(":card_file_box: 데이터 관리")
 
 
+# 스키마 변경 시 버전을 올리면 cache_resource가 자동 갱신됨(stale store 방지)
+STORE_SCHEMA_VERSION = "2026-06-25c"
+
+
 @st.cache_resource
-def get_store():
+def get_store(schema_version: str = STORE_SCHEMA_VERSION):
     from precedent_finder.db.store import PrecedentStore
     return PrecedentStore()
 

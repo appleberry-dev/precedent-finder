@@ -24,14 +24,19 @@ st.set_page_config(
 
 # --- 초기화 ---
 
+# 스키마/저장소 클래스 변경 시 이 값을 올리면 cache_resource가 자동 갱신됨
+# (Streamlit 핫리로드 시 옛 store 객체가 남아 AttributeError 나는 문제 방지)
+STORE_SCHEMA_VERSION = "2026-06-25c"
+
+
 @st.cache_resource
-def get_store():
+def get_store(schema_version: str = STORE_SCHEMA_VERSION):
     from precedent_finder.db.store import PrecedentStore
     return PrecedentStore()
 
 
 @st.cache_resource
-def get_chat_store():
+def get_chat_store(schema_version: str = STORE_SCHEMA_VERSION):
     from precedent_finder.db.store import PrecedentStore
     import tempfile
     chat_db = Path(tempfile.gettempdir()) / "precedent_finder_chat.db"
