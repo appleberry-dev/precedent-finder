@@ -1,4 +1,4 @@
-"""판례 파인더 — Streamlit 웹 UI"""
+"""교육청 고발 방어 디팬스타워 — Streamlit 웹 UI"""
 
 import os
 import sys
@@ -15,7 +15,7 @@ if hasattr(st, "secrets"):
             os.environ[key] = st.secrets[key]
 
 st.set_page_config(
-    page_title="판례 파인더",
+    page_title="교육청 고발 방어 디팬스타워",
     page_icon=":balance_scale:",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -135,8 +135,8 @@ with st.sidebar:
 
 # --- 메인: 채팅 ---
 
-st.title(":balance_scale: 판례 파인더")
-st.caption("수집된 판례와 법령을 기반으로 법률 질의에 답변합니다. 채팅창에 PDF/이미지를 첨부할 수 있습니다.")
+st.title(":shield: 교육청 고발 방어 디팬스타워")
+st.caption("교육청 고발 사건의 방어 측을 지원하는 한국 법률 전문 AI. 판례·법령·회사 자료를 근거로 변호인 의견서·방어 서면 톤으로 답변합니다. 채팅창에 PDF/이미지를 첨부할 수 있습니다.")
 
 
 # --- 업데이트 내역 ---
