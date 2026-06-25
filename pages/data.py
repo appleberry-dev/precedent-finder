@@ -81,10 +81,64 @@ def render_doc_body(d):
         st.text(content[:5000] + ("..." if len(content) > 5000 else ""))
 
 
+def doc_images(d):
+    """문서에서 실제 존재하는 이미지 경로 목록을 반환."""
+    meta = {}
+    if d.get("metadata"):
+        try:
+            meta = json.loads(d["metadata"])
+        except (ValueError, TypeError):
+            meta = {}
+    paths = list(meta.get("image_paths", []))
+    if meta.get("image_path"):
+        paths.insert(0, meta["image_path"])
+    # 중복 제거 + 존재하는 것만
+    seen, out = set(), []
+    for p in paths:
+        if p and p not in seen and Path(p).exists():
+            seen.add(p)
+            out.append(p)
+    return out
+
+
 # --- 탭 ---
-tab_opinion, tab_company, tab_prec, tab_statute, tab_search = st.tabs(
-    [":shield: 의견서·참고자료", "수집 자료", "판례", "법령", "검색"]
+tab_opinion, tab_images, tab_company, tab_prec, tab_statute, tab_search = st.tabs(
+    [":shield: 의견서·참고자료", ":frame_with_picture: 증거 이미지", "수집 자료", "판례", "법령", "검색"]
 )
+
+# --- 증거 이미지 갤러리 탭 ---
+with tab_images:
+    st.subheader(":frame_with_picture: 증거 이미지 모아보기")
+    docs_img = [(d, doc_images(d)) for d in store.list_documents()]
+    docs_img = [(d, imgs) for d, imgs in docs_img if imgs]
+
+    if not docs_img:
+        st.info("등록된 증거 이미지가 없습니다.")
+    else:
+        total = sum(len(imgs) for _, imgs in docs_img)
+        st.caption(f"총 {total}장 · {len(docs_img)}개 자료")
+
+        # 자료 종류 필터
+        _img_order = {"defense": 0, "evidence": 1, "contract": 2, "notice": 3,
+                      "book": 4, "product": 5}
+        docs_img.sort(key=lambda x: (_img_order.get(x[0].get("source_type"), 9), x[0].get("id", 0)))
+        cats = sorted({d.get("source_type", "web") for d, _ in docs_img},
+                      key=lambda t: _img_order.get(t, 9))
+        pick = st.selectbox(
+            "자료 종류", ["전체"] + cats,
+            format_func=lambda t: "전체" if t == "전체" else TYPE_LABELS.get(t, t),
+        )
+
+        for d, imgs in docs_img:
+            stype = d.get("source_type", "web")
+            if pick != "전체" and stype != pick:
+                continue
+            badge = TYPE_LABELS.get(stype, stype)
+            st.markdown(f"**{badge} · {d.get('title') or '(제목 없음)'}**  ·  {len(imgs)}장")
+            cols = st.columns(3)
+            for i, p in enumerate(imgs):
+                cols[i % 3].image(p, caption=Path(p).name, use_container_width=True)
+            st.divider()
 
 # --- 의견서·참고자료 탭 ---
 with tab_opinion:
