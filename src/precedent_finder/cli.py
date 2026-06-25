@@ -351,6 +351,50 @@ def add_text(
         store.close()
 
 
+@app.command(name="add-image")
+def add_image(
+    image: str = typer.Option(..., "--image", "-i", help="이미지 파일 경로 (간판/룸 사진 등)"),
+    title: str = typer.Option(..., "--title", help="증거 제목 (예: 외부 간판 - 토들리에+애플베리)"),
+    desc: str = typer.Option("", "--desc", "-d", help="이 사진이 입증하는 내용 설명"),
+    type: str = typer.Option("evidence", "--type", "-t", help="문서 유형 (기본 evidence)"),
+):
+    """현장 증거 사진을 저장 + 설명을 문서로 기록 (간판·작업장·룸 사진 등).
+
+    이미지는 data/evidence/ 로 복사하고, 설명 텍스트만 벡터 인덱싱한다.
+    (이미지 자체는 검색되지 않으므로 설명을 충실히 작성할 것)
+    """
+    import shutil
+
+    src = Path(image)
+    if not src.exists():
+        console.print(f"[red]이미지 파일 없음: {image}[/]")
+        raise typer.Exit(1)
+
+    evidence_dir = Path("data/evidence")
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    # 안전한 파일명으로 복사
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in title)[:50]
+    dest = evidence_dir / f"{safe}{src.suffix.lower()}"
+    shutil.copy2(src, dest)
+
+    store = _get_store()
+    try:
+        content = f"[현장 증거 사진] {title}\n{desc}".strip()
+        store.upsert_document({
+            "doc_key": f"evidence:{title}",
+            "source_type": type,
+            "title": title,
+            "content": content,
+            "metadata": {"image_path": str(dest), "kind": "image"},
+        }, source="evidence")
+        console.print(f"[green]저장 완료: [{type}] {title}[/]")
+        console.print(f"  이미지: {dest}")
+        console.print("[dim]벡터 DB 반영: precedent-finder index --only documents[/]")
+    finally:
+        store.close()
+
+
 @app.command(name="crawl-company")
 def crawl_company(
     homepage: str = typer.Option("https://www.appleberryenglish.co.kr", help="홈페이지 URL"),

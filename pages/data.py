@@ -1,7 +1,9 @@
 """데이터 관리 페이지"""
 
+import json
 import os
 import sys
+from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import streamlit as st
@@ -122,7 +124,13 @@ with tab_company:
         )
     else:
         type_labels = {
+            "defense": ":shield: 방어 논리",
             "company": ":office: 회사 기초정보",
+            "contract": ":page_facing_up: 계약서",
+            "notice": ":bell: 학부모 안내",
+            "evidence": ":camera_with_flash: 현장 증거",
+            "book": ":books: 도서·서지(ISBN)",
+            "product": ":package: 콘텐츠 상품",
             "promo": ":star2: 브랜드 홍보",
             "blog": ":memo: 블로그",
             "news": ":newspaper: 뉴스 기사",
@@ -142,7 +150,8 @@ with tab_company:
         st.caption(f"총 {len(documents)}건  |  {summary}")
 
         # 유형 필터 (회사정보·브랜드홍보를 앞으로)
-        _order = {"company": 0, "promo": 1}
+        _order = {"defense": 0, "company": 1, "contract": 2, "notice": 3,
+                  "evidence": 4, "book": 5, "product": 6, "promo": 7}
         types = sorted(counts.keys(), key=lambda t: (_order.get(t, 2), t))
         type_filter = st.selectbox(
             "자료 유형",
@@ -164,12 +173,26 @@ with tab_company:
             if pub:
                 header += f"  ·  {pub[:16]}"
 
-            with st.expander(header, expanded=(stype == "company")):
+            with st.expander(header, expanded=(stype in ("defense", "company"))):
                 if d.get("url"):
                     st.markdown(f":link: [원문 보기]({d['url']})")
+
+                # metadata 파싱 (이미지·ISBN 등)
+                meta = {}
+                if d.get("metadata"):
+                    try:
+                        meta = json.loads(d["metadata"])
+                    except (ValueError, TypeError):
+                        meta = {}
+
+                # 현장 증거: 이미지 표시
+                img_path = meta.get("image_path", "")
+                if img_path and Path(img_path).exists():
+                    st.image(img_path, use_container_width=True)
+
                 content = d.get("content", "")
-                # 회사 기초정보는 마크다운 그대로, 그 외는 일반 텍스트
-                if stype == "company":
+                # 방어 논리·회사정보는 마크다운, 그 외는 일반 텍스트
+                if stype in ("defense", "company"):
                     st.markdown(content)
                 else:
                     st.text(content[:5000] + ("..." if len(content) > 5000 else ""))

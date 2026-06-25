@@ -18,6 +18,11 @@ wheels/
 
 # Screenshots
 *.png
+*.jpg
+*.jpeg
+# 단, 현장 증거 사진은 배포에 포함 (학원 아님 입증 자료)
+!data/evidence/
+!data/evidence/**
 
 # macOS / 작업 임시
 .DS_Store
