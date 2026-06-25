@@ -26,7 +26,7 @@ st.set_page_config(
 
 # 스키마/저장소 클래스 변경 시 이 값을 올리면 cache_resource가 자동 갱신됨
 # (Streamlit 핫리로드 시 옛 store 객체가 남아 AttributeError 나는 문제 방지)
-STORE_SCHEMA_VERSION = "2026-06-25c"
+STORE_SCHEMA_VERSION = "2026-06-25d"
 
 
 @st.cache_resource
