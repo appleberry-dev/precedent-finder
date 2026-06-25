@@ -14,7 +14,7 @@ st.title(":card_file_box: 데이터 관리")
 
 
 # 스키마 변경 시 버전을 올리면 cache_resource가 자동 갱신됨(stale store 방지)
-STORE_SCHEMA_VERSION = "2026-06-26b"
+STORE_SCHEMA_VERSION = "2026-06-26c"
 
 
 @st.cache_resource
@@ -287,8 +287,13 @@ with tab_company:
 
         shown = documents if type_filter == "전체" else [d for d in documents if d.get("source_type") == type_filter]
 
-        # 방어 논리·회사 기초정보를 항상 위로
-        shown = sorted(shown, key=lambda d: (_order.get(d.get("source_type"), 2), d.get("id", 0)))
+        # 고정(pin) 문서 → 방어 논리·회사 기초정보 순으로 위로
+        def _pin(d):
+            try:
+                return 0 if json.loads(d.get("metadata") or "{}").get("pin") else 1
+            except (ValueError, TypeError):
+                return 1
+        shown = sorted(shown, key=lambda d: (_pin(d), _order.get(d.get("source_type"), 2), d.get("id", 0)))
 
         for d in shown:
             stype = d.get("source_type", "web")

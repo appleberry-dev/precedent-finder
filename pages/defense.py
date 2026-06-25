@@ -20,7 +20,7 @@ DOCS_DIR = Path(__file__).parent.parent / "docs"
 
 
 # 스키마 변경 시 버전을 올리면 cache_resource가 자동 갱신됨(stale store 방지)
-STORE_SCHEMA_VERSION = "2026-06-26b"
+STORE_SCHEMA_VERSION = "2026-06-26c"
 
 
 @st.cache_resource
