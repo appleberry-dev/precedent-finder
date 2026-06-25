@@ -141,10 +141,23 @@ st.caption("교육청 고발 사건의 방어 측을 지원하는 한국 법률 
 
 # --- 업데이트 내역 ---
 
-LAST_UPDATED = "2026-06-23"
+LAST_UPDATED = "2026-06-25"
 
 # 최신 항목이 맨 위. 새 업데이트 시 맨 앞에 dict 추가.
 UPDATE_LOG = [
+    {
+        "date": "2026-06-25",
+        "items": [
+            "**변호인 의견서 초안 v1** 작성 — 수집 자료·판례 기반 (데이터 관리 → "
+            ":shield: 의견서·참고자료 탭)",
+            "**참고판례 정리** 추가 — 유리(2008도3654 제한해석·2021도16198 시설 엄격해석) / "
+            "불리(2011도9013 유아 대상 교습) 구분",
+            "**애플베리 교재 자료 적재** — SCIENCE 5·Literacy Sprout 1 (ISBN 등재 도서, "
+            "표지·본문 이미지) → '직접 개발·판매하는 도서' 입증",
+            "방어 증거 정비 — 사업자등록(동탄=도서 도소매업)·구매계약서·약관·키즈노트·현장사진",
+            "벡터 DB 재인덱싱(문서 57건 → 청크 200개)",
+        ],
+    },
     {
         "date": "2026-06-23",
         "items": [
@@ -170,13 +183,18 @@ def render_update_log():
         stat_count = store.count_statutes()
     except Exception:
         prec_count = stat_count = None
+    try:
+        doc_count = store.count_documents()
+    except Exception:
+        doc_count = None
 
     with st.expander(f":calendar: 데이터 업데이트 내역 (최종 {LAST_UPDATED})", expanded=True):
         if prec_count is not None:
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric("판례", f"{prec_count}건")
             c2.metric("법령 조문", f"{stat_count}건")
-            c3.metric("최종 업데이트", LAST_UPDATED)
+            c3.metric("수집 자료", f"{doc_count}건" if doc_count is not None else "-")
+            c4.metric("최종 업데이트", LAST_UPDATED)
         for entry in UPDATE_LOG:
             st.markdown(f"**{entry['date']}**")
             for item in entry["items"]:
