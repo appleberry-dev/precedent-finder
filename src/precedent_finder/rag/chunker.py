@@ -166,7 +166,7 @@ class Chunker:
         type_label = {
             "company": "회사정보", "blog": "블로그", "news": "뉴스기사",
             "youtube": "유튜브", "sns": "SNS", "manual": "메모",
-            "research": "업계조사", "reference": "참고자료",
+            "research": "업계조사", "reference": "참고자료", "promo": "브랜드홍보",
         }.get(source_type, "문서")
         full_text = f"[{type_label}] {title}\n{text}" if title else f"[{type_label}]\n{text}"
         parts = self._split_text(full_text)

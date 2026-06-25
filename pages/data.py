@@ -123,6 +123,7 @@ with tab_company:
     else:
         type_labels = {
             "company": ":office: 회사 기초정보",
+            "promo": ":star2: 브랜드 홍보",
             "blog": ":memo: 블로그",
             "news": ":newspaper: 뉴스 기사",
             "youtube": ":tv: 유튜브",
@@ -140,8 +141,9 @@ with tab_company:
         summary = " · ".join(f"{type_labels.get(t, t)} {c}건" for t, c in counts.items())
         st.caption(f"총 {len(documents)}건  |  {summary}")
 
-        # 유형 필터
-        types = sorted(counts.keys(), key=lambda t: (t != "company", t))
+        # 유형 필터 (회사정보·브랜드홍보를 앞으로)
+        _order = {"company": 0, "promo": 1}
+        types = sorted(counts.keys(), key=lambda t: (_order.get(t, 2), t))
         type_filter = st.selectbox(
             "자료 유형",
             ["전체"] + types,
@@ -150,8 +152,8 @@ with tab_company:
 
         shown = documents if type_filter == "전체" else [d for d in documents if d.get("source_type") == type_filter]
 
-        # 회사 기초정보를 항상 위로
-        shown = sorted(shown, key=lambda d: (d.get("source_type") != "company", d.get("id", 0)))
+        # 회사 기초정보·브랜드 홍보를 항상 위로
+        shown = sorted(shown, key=lambda d: (_order.get(d.get("source_type"), 2), d.get("id", 0)))
 
         for d in shown:
             stype = d.get("source_type", "web")
